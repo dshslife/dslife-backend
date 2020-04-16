@@ -4,10 +4,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strconv"
 	"strings"
 
 	// db driver
+	"crypto/md5"
+	"crypto/rand"
+
+	guuid "github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -182,4 +189,158 @@ func GetPOST(id int) string {
 	} else {
 		return "nodata"
 	}
+}
+
+type PostList struct {
+	Id    int    `json:"id"`
+	Title string `json:"title"`
+}
+
+func GetPostList(typ string, page int) string {
+
+	rows, err := db.Query(`SELECT i, title FROM board WHERE type=? OFFSET ? LIMIT 10`, typ, 10*(page-1))
+	defer rows.Close()
+	if err != nil {
+		panic(err)
+	}
+	var postlist []PostList
+	for rows.Next() {
+		var title string
+		var id string
+		rows.Scan(&title, &id)
+		idi, err := strconv.Atoi(id)
+		if err != nil {
+			panic(err)
+		}
+		postlist = append(postlist, PostList{Id: idi, Title: title})
+	}
+	if len(postlist) == 0 {
+		return ""
+	} else {
+		data, err := json.Marshal(postlist)
+		if err != nil {
+			return "Unexpected Error"
+		} else {
+			return string(data)
+		}
+	}
+}
+
+func isVaildToken(token string) bool {
+	rows, err := db.Query(`SELECT unique_id FROM token WHERE token=?`, token)
+	defer rows.Close()
+	if err != nil {
+		return false
+	} else {
+		if !rows.Next() {
+			return false
+		} else {
+			return true
+		}
+	}
+}
+
+type UserInfo struct {
+	Unique_id string `json:"unique_id"`
+	Id        string `json:"id"`
+	Name      string `json:"name"`
+	Number    string `json:"number"`
+	Room      int    `json:"room"`
+	Type      string `json:"user_type"`
+}
+
+func GetTokenFromId(id string, passwd string) (UserInfo, string) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(passwd), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatal(err)
+	}
+	hasher := md5.New()
+	hasher.Write(hash)
+	rows, err := db.Query(`SELECT unique_id, id, name, number, room, type FROM user WHERE id=? AND password=?`, id, hash)
+	defer rows.Close()
+	if err != nil {
+		panic(err)
+	} else {
+		if !rows.Next() {
+			return UserInfo{}, ""
+		} else {
+			var (
+				unique_id string
+				id        string
+				name      string
+				number    string
+				room      int
+				types     string
+			)
+			rows.Scan(&unique_id, &id, &name, &number, &room, &types)
+			statement, err := db.Prepare("INSERT INTO token( token, unique_id, id, name, number, room, type ) VALUES (?, ?, ?, ?, ?, ?, ?)")
+			if err != nil {
+				panic(err)
+			}
+			token := GenerateToken()
+			_, err = statement.Exec(token, unique_id, id, name, number, room, types)
+			if err != nil {
+				panic(err)
+			}
+			return UserInfo{Unique_id: unique_id, Id: id, Name: name, Number: number, Room: room, Type: types}, token
+		}
+	}
+}
+
+func GetInfoWithToken(token string) (UserInfo, bool) {
+	var (
+		unique_id string
+		id        string
+		name      string
+		number    string
+		room      int
+		types     string
+	)
+	rows, err := db.Query(`SELECT unique_id, id, name, number, room, type FROM token WHERE token=?`, token)
+	defer rows.Close()
+	if err != nil {
+		panic(err)
+	} else {
+		if !rows.Next() {
+			rows.Scan(&unique_id, &id, &name, &number, &room, &types)
+			return UserInfo{Unique_id: unique_id, Id: id, Name: name, Number: number, Room: room, Type: types}, true
+		} else {
+			return UserInfo{}, false
+		}
+	}
+
+}
+
+func GenerateToken() string {
+	b := make([]byte, 20)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+//"i" INTEGER PRIMARY KEY AUTOINCREMENT,
+// "token" TEXT NOT NULL,
+// "unique_id" TEXT NOT NULL,
+// "id" TEXT NOT NULL,
+// "name" TEXT NOT NULL,
+// "number" TEXT NOT NULL,
+// "room" INTEGER NOT NULL,
+// "type" TEXT NOT NULL
+// CreateUser
+func CreateUser(id string, passwd string, name string, number string, room int, types string) (sql.Result, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(passwd), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatal(err)
+	}
+	hasher := md5.New()
+	hasher.Write(hash)
+	id := guuid.New()
+
+	statement, err := db.Prepare("INSERT INTO user(unique_id, id, passwd, name, number, room, type) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		fmt.Println("First Error")
+		fmt.Println(err)
+	}
+	res, err = statement.Exec(id.String(), id, passwd, name, number, room, types)
+	defer statement.Close()
+	return res, err
 }
