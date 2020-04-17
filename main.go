@@ -30,6 +30,11 @@ type FileUrl struct {
 	URL      string `json:"fileurl"`
 }
 
+type TokenStr struct {
+	TOKEN    string             `json:"token"`
+	USERINFO framework.UserInfo `json:"userinfo"`
+}
+
 func login(w http.ResponseWriter, r *http.Request) {
 	var UserInfo LoginUser
 	reqBody, err := ioutil.ReadAll(r.Body)
@@ -44,14 +49,60 @@ func login(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	var usertoken user
-	usertoken.TOKEN = "aksdljaslkdjalskdjalsk123"
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(usertoken); err != nil {
-		panic(err)
+	userinfo, token, isCorrect := framework.GetTokenFromId(UserInfo.ID, UserInfo.PASSWORD)
+	if isCorrect {
+		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+		w.WriteHeader(http.StatusCreated)
+		if err := json.NewEncoder(w).Encode(TokenStr{TOKEN: token, USERINFO: userinfo}); err != nil {
+			panic(err)
+		}
+		return
+	} else {
+		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+		w.WriteHeader(404)
+		if err := json.NewEncoder(w).Encode("Incorrect ID/PW"); err != nil {
+			panic(err)
+		}
+		return
 	}
 
+}
+
+type RegisterForm struct {
+	Id       string `json:"id"`
+	PASSWORD string `json:"password"`
+	Name     string `json:"name"`
+	Number   string `json:"number"`
+	Room     int    `json:"room"`
+	Type     string `json:"user_type"`
+}
+
+func Register(w http.ResponseWriter, r *http.Request) {
+	var userinfo = RegisterForm{}
+	reqBody, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		panic(err)
+	}
+	if err := json.Unmarshal(reqBody, &userinfo); err != nil {
+		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+		w.WriteHeader(422)
+		if err := json.NewEncoder(w).Encode(err); err != nil {
+			panic(err)
+		}
+		return
+	}
+	fmt.Println(userinfo)
+	_, err = framework.CreateUser(userinfo.Id, userinfo.PASSWORD, userinfo.Name, userinfo.Number, userinfo.Room, userinfo.Type)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+		w.WriteHeader(503)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode("{ 'status': 'successful' }"); err != nil {
+		panic(err)
+	}
 }
 
 // PostNotice is Bad Server Fuck You
@@ -120,6 +171,7 @@ func main() {
 	api.HandleFunc("/login", login).Methods("POST")
 	api.HandleFunc("/upload", PostNotice).Methods("POST")
 	api.Path("/post").Queries("id", "{[0-9]*?}").HandlerFunc(GetPost).Methods("GET")
+	api.HandleFunc("/register", Register).Methods("POST")
 	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 	log.Fatal(http.ListenAndServe(":8080", router))
 }

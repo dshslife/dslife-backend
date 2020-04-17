@@ -2,9 +2,9 @@ package framework
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 
@@ -14,7 +14,6 @@ import (
 
 	guuid "github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
-	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -241,60 +240,64 @@ func isVaildToken(token string) bool {
 }
 
 type UserInfo struct {
-	Unique_id string `json:"unique_id"`
-	Id        string `json:"id"`
-	Name      string `json:"name"`
-	Number    string `json:"number"`
-	Room      int    `json:"room"`
-	Type      string `json:"user_type"`
+	Uniqueid string `json:"unique_id"`
+	Id       string `json:"id"`
+	Name     string `json:"name"`
+	Number   string `json:"number"`
+	Room     int    `json:"room"`
+	Type     string `json:"user_type"`
 }
 
-func GetTokenFromId(id string, passwd string) (UserInfo, string) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(passwd), bcrypt.DefaultCost)
-	if err != nil {
-		log.Fatal(err)
-	}
+func GetTokenFromId(id string, passwd string) (UserInfo, string, bool) {
 	hasher := md5.New()
-	hasher.Write(hash)
-	rows, err := db.Query(`SELECT unique_id, id, name, number, room, type FROM user WHERE id=? AND password=?`, id, hash)
-	defer rows.Close()
+	hasher.Write([]byte(passwd))
+	hash := hex.EncodeToString(hasher.Sum(nil))
+	fmt.Println(string(hash))
+	rows, err := db.Query(`SELECT unique_id, id, name, number, room, type FROM user WHERE id=? AND password=?`, id, string(hash))
 	if err != nil {
 		panic(err)
 	} else {
 		if !rows.Next() {
-			return UserInfo{}, ""
+			fmt.Println("HALO")
+			return UserInfo{}, "", false
 		} else {
 			var (
-				unique_id string
-				id        string
-				name      string
-				number    string
-				room      int
-				types     string
+				uniqueid string
+				id       string
+				name     string
+				number   string
+				room     int
+				types    string
 			)
-			rows.Scan(&unique_id, &id, &name, &number, &room, &types)
+			rows.Scan(&uniqueid, &id, &name, &number, &room, &types)
+			rows.Close()
 			statement, err := db.Prepare("INSERT INTO token( token, unique_id, id, name, number, room, type ) VALUES (?, ?, ?, ?, ?, ?, ?)")
+
 			if err != nil {
 				panic(err)
 			}
 			token := GenerateToken()
-			_, err = statement.Exec(token, unique_id, id, name, number, room, types)
+			_, err = statement.Exec(token, uniqueid, id, name, number, room, types)
+			statement.Close()
+			fmt.Println(err)
 			if err != nil {
+				fmt.Println(err)
 				panic(err)
 			}
-			return UserInfo{Unique_id: unique_id, Id: id, Name: name, Number: number, Room: room, Type: types}, token
+			return UserInfo{Uniqueid: uniqueid, Id: id, Name: name, Number: number, Room: room, Type: types}, token, true
 		}
 	}
 }
 
+// GetInfoWithToken
 func GetInfoWithToken(token string) (UserInfo, bool) {
 	var (
-		unique_id string
-		id        string
-		name      string
-		number    string
-		room      int
-		types     string
+		uniqueid string
+		id       string
+		name     string
+		number   string
+		room     int
+		types    string
 	)
 	rows, err := db.Query(`SELECT unique_id, id, name, number, room, type FROM token WHERE token=?`, token)
 	defer rows.Close()
@@ -302,45 +305,36 @@ func GetInfoWithToken(token string) (UserInfo, bool) {
 		panic(err)
 	} else {
 		if !rows.Next() {
-			rows.Scan(&unique_id, &id, &name, &number, &room, &types)
-			return UserInfo{Unique_id: unique_id, Id: id, Name: name, Number: number, Room: room, Type: types}, true
+			rows.Scan(&uniqueid, &id, &name, &number, &room, &types)
+			return UserInfo{Uniqueid: uniqueid, Id: id, Name: name, Number: number, Room: room, Type: types}, true
 		} else {
 			return UserInfo{}, false
 		}
 	}
-
 }
 
+// GenerateToken is fuck you
 func GenerateToken() string {
 	b := make([]byte, 20)
 	rand.Read(b)
 	return fmt.Sprintf("%x", b)
 }
 
-//"i" INTEGER PRIMARY KEY AUTOINCREMENT,
-// "token" TEXT NOT NULL,
-// "unique_id" TEXT NOT NULL,
-// "id" TEXT NOT NULL,
-// "name" TEXT NOT NULL,
-// "number" TEXT NOT NULL,
-// "room" INTEGER NOT NULL,
-// "type" TEXT NOT NULL
-// CreateUser
+// CreateUser is CreateUser
 func CreateUser(id string, passwd string, name string, number string, room int, types string) (sql.Result, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(passwd), bcrypt.DefaultCost)
-	if err != nil {
-		log.Fatal(err)
-	}
 	hasher := md5.New()
-	hasher.Write(hash)
-	id := guuid.New()
+	hasher.Write([]byte(passwd))
+	hash := hex.EncodeToString(hasher.Sum(nil))
+	uniqueid := guuid.New().String()
 
-	statement, err := db.Prepare("INSERT INTO user(unique_id, id, passwd, name, number, room, type) VALUES (?, ?, ?, ?, ?)")
+	statement, err := db.Prepare("INSERT INTO user(unique_id, id, password, name, number, room, type) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	defer statement.Close()
 	if err != nil {
 		fmt.Println("First Error")
 		fmt.Println(err)
+		return nil, err
 	}
-	res, err = statement.Exec(id.String(), id, passwd, name, number, room, types)
-	defer statement.Close()
+	res, err := statement.Exec(uniqueid, id, string(hash), name, number, room, types)
+
 	return res, err
 }
